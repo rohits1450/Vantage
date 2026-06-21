@@ -6,13 +6,16 @@ import {
   Activity,
   BarChart3,
   Braces,
+  Bot,
   Database,
   Download,
+  ExternalLink,
   FileJson,
   Gauge,
   LineChart,
   Play,
   ShieldCheck,
+  ShieldAlert,
   Target,
   TrendingUp,
   Terminal as TerminalIcon,
@@ -43,7 +46,7 @@ const INITIAL_FORM: FormState = {
   lookbackBars: 700
 };
 
-type AppTab = 'terminal' | 'backtest' | 'skill' | 'faq' | 'submission';
+type AppTab = 'terminal' | 'backtest' | 'skill' | 'faq' | 'submission' | 'agents';
 
 const tabs: Array<{ id: AppTab; label: string; Icon: LucideIcon }> = [
   { id: 'terminal', label: 'Terminal', Icon: TerminalIcon },
@@ -51,7 +54,364 @@ const tabs: Array<{ id: AppTab; label: string; Icon: LucideIcon }> = [
   { id: 'skill', label: 'Skill Spec', Icon: FileJson },
   { id: 'faq', label: 'FAQ', Icon: HelpCircle },
   { id: 'submission', label: 'Submit', Icon: Rocket },
+  { id: 'agents', label: 'Agent Control', Icon: Bot },
 ];
+
+// ─── Agent Control Panel ──────────────────────────────────────────────────────
+
+interface AgentTrade {
+  signal_id: string;
+  asset: string;
+  direction: string;
+  amount_bnb: number;
+  tx_hash: string;
+  status: string;
+  pnl_pct: number | null;
+  demo: boolean;
+  created_at: string;
+}
+
+interface AgentIdentity {
+  agent_name: string;
+  token_id: number | null;
+  wallet_address: string;
+  registration_tx: string | null;
+}
+
+interface GuardianState {
+  drawdown_pct: number;
+  consecutive_losses: number;
+  current_equity_bnb: number;
+  peak_equity_bnb: number;
+  is_halted: boolean;
+  halt_reason: string | null;
+  last_check_at: string | null;
+}
+
+interface HaltInfo {
+  reason: string;
+  triggered_at: string;
+  drawdown_pct: number;
+  consecutive_losses: number;
+  incident_nft_tx?: string;
+  transfer_tx?: string;
+  equity_recovered_bnb?: number;
+  bscscan_nft_url?: string;
+}
+
+function AgentControlPanel() {
+  const [wsConnected, setWsConnected] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
+  const [trades, setTrades] = useState<AgentTrade[]>([]);
+  const [identities, setIdentities] = useState<AgentIdentity[]>([]);
+  const [guardianState, setGuardianState] = useState<GuardianState | null>(null);
+  const [executorStatus, setExecutorStatus] = useState<'RUNNING'|'STOPPED'|'OFFLINE'>('OFFLINE');
+  const [guardianStatus, setGuardianStatus] = useState<'RUNNING'|'STOPPED'|'OFFLINE'>('OFFLINE');
+  const [isHalted, setIsHalted] = useState(false);
+  const [haltInfo, setHaltInfo] = useState<HaltInfo | null>(null);
+  const [autoTrading, setAutoTrading] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [maxTradeBnb, setMaxTradeBnb] = useState('0.01');
+  const [slippageBps, setSlippageBps] = useState('50');
+  const [maxDrawdown, setMaxDrawdown] = useState('20');
+  const [maxLosses, setMaxLosses] = useState('5');
+  const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    const WS_URL = process.env.NEXT_PUBLIC_AGENT_WS_URL || 'ws://localhost:8765';
+    let ws: WebSocket;
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+
+    function connect() {
+      try {
+        ws = new WebSocket(WS_URL);
+        wsRef.current = ws;
+
+        ws.onopen = () => setWsConnected(true);
+        ws.onclose = () => {
+          setWsConnected(false);
+          setExecutorStatus('OFFLINE');
+          setGuardianStatus('OFFLINE');
+          reconnectTimeout = setTimeout(connect, 5000);
+        };
+        ws.onerror = () => ws.close();
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data as string);
+            switch (msg.type) {
+              case 'TRADE_HISTORY':
+                setTrades(msg.trades || []);
+                break;
+              case 'AGENT_IDENTITIES':
+                setIdentities(msg.identities || []);
+                break;
+              case 'GUARDIAN_STATE':
+                setGuardianState(msg);
+                setIsHalted(!!msg.is_halted);
+                break;
+              case 'AGENT_STATUS':
+                if (msg.agent === 'executor') {
+                  setExecutorStatus(msg.status as 'RUNNING'|'STOPPED'|'OFFLINE');
+                  setDemoMode(!!msg.demo_mode);
+                } else if (msg.agent === 'guardian') {
+                  setGuardianStatus(msg.status as 'RUNNING'|'STOPPED'|'OFFLINE');
+                }
+                break;
+              case 'TRADE_SUBMITTED':
+              case 'TRADE_CONFIRMED':
+                setTrades(prev => {
+                  const exists = prev.find(t => t.signal_id === msg.signal_id);
+                  if (exists) return prev.map(t => t.signal_id === msg.signal_id ? { ...t, ...msg } : t);
+                  return [msg as AgentTrade, ...prev].slice(0, 20);
+                });
+                break;
+              case 'GUARDIAN_UPDATE':
+                setGuardianState(prev => ({ ...(prev || {} as GuardianState), ...msg }));
+                break;
+              case 'HALT':
+                setIsHalted(true);
+                setHaltInfo(msg as HaltInfo);
+                break;
+              case 'INCIDENT_REPORT':
+                setHaltInfo(prev => prev ? { ...prev, ...msg } : msg as HaltInfo);
+                break;
+            }
+          } catch {}
+        };
+      } catch {
+        reconnectTimeout = setTimeout(connect, 5000);
+      }
+    }
+
+    connect();
+    return () => {
+      clearTimeout(reconnectTimeout);
+      ws?.close();
+    };
+  }, []);
+
+  async function sendControl(action: string) {
+    try {
+      await fetch('/api/agents/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+    } catch {}
+  }
+
+  async function saveSettings() {
+    try {
+      await fetch('/api/agents/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          max_trade_size_bnb: parseFloat(maxTradeBnb),
+          slippage_bps: parseInt(slippageBps),
+          max_drawdown_pct: parseFloat(maxDrawdown),
+          max_consecutive_losses: parseInt(maxLosses),
+        }),
+      });
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2000);
+    } catch {}
+  }
+
+  const executorIdentity = identities.find(i => i.agent_name === 'executor');
+  const guardianIdentity = identities.find(i => i.agent_name === 'guardian');
+  const BSCSCAN = 'https://testnet.bscscan.com';
+
+  function statusDot(status: 'RUNNING'|'STOPPED'|'OFFLINE') {
+    const colors: Record<string, string> = { RUNNING: '#0ecb81', STOPPED: '#f0b90b', OFFLINE: '#848e9c' };
+    return <span style={{ display:'inline-block', width:8, height:8, borderRadius:'50%', background: colors[status] || '#848e9c', marginRight:6 }} />;
+  }
+
+  return (
+    <div style={{ position: 'relative', minHeight: 400 }}>
+      {/* Demo Mode Watermark */}
+      {demoMode && wsConnected && (
+        <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:'none', zIndex:0, opacity:0.04 }}>
+          <span style={{ fontSize:80, fontWeight:900, color:'#f0b90b', transform:'rotate(-20deg)', userSelect:'none', whiteSpace:'nowrap' }}>DEMO MODE</span>
+        </div>
+      )}
+
+      {/* Halt Banner */}
+      {isHalted && (
+        <div style={{ background:'rgba(246,70,93,0.12)', border:'1px solid rgba(246,70,93,0.4)', borderRadius:12, padding:'16px 20px', marginBottom:20, display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:12 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <ShieldAlert size={22} color='#f6465d' />
+            <div>
+              <div style={{ color:'#f6465d', fontWeight:800, fontSize:15 }}>TRADING HALTED — EMERGENCY STOP TRIGGERED</div>
+              <div style={{ color:'#848e9c', fontSize:13, marginTop:2 }}>
+                Reason: {haltInfo?.reason || 'Unknown'}
+                {haltInfo?.drawdown_pct ? ` | Drawdown: ${haltInfo.drawdown_pct.toFixed(1)}%` : ''}
+              </div>
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:10 }}>
+            {haltInfo?.bscscan_nft_url && (
+              <a href={haltInfo.bscscan_nft_url} target="_blank" rel="noreferrer" style={{ fontSize:12, color:'#f0b90b', textDecoration:'none', fontWeight:700, display:'flex', alignItems:'center', gap:4 }}>
+                View Incident NFT <ExternalLink size={12} />
+              </a>
+            )}
+            {haltInfo?.equity_recovered_bnb != null && (
+              <span style={{ fontSize:12, color:'#0ecb81', fontWeight:700 }}>
+                {haltInfo.equity_recovered_bnb.toFixed(6)} BNB recovered
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Offline Banner */}
+      {!wsConnected && (
+        <div style={{ background:'rgba(132,142,156,0.1)', border:'1px solid rgba(132,142,156,0.25)', borderRadius:12, padding:'14px 20px', marginBottom:20, display:'flex', alignItems:'center', gap:10 }}>
+          <Bot size={18} color='#848e9c' />
+          <div>
+            <div style={{ color:'#848e9c', fontWeight:700, fontSize:14 }}>Agents Offline</div>
+            <div style={{ color:'#848e9c', fontSize:12, marginTop:2 }}>Start the orchestrator: <code style={{ background:'rgba(255,255,255,0.06)', padding:'1px 6px', borderRadius:4, fontSize:11 }}>python agents/orchestrator.py</code></div>
+          </div>
+        </div>
+      )}
+
+      {/* Status Cards */}
+      {wsConnected && (
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:20 }}>
+          {/* Executor Card */}
+          <div style={{ background:'#1e2329', borderRadius:12, border:'1px solid #2b3139', padding:20 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <Bot size={18} color='#f0b90b' />
+                <span style={{ color:'#eaecef', fontWeight:800, fontSize:14 }}>Execution Agent</span>
+              </div>
+              <span style={{ background: demoMode ? 'rgba(240,185,11,0.15)' : 'rgba(14,203,129,0.1)', color: demoMode ? '#f0b90b' : '#0ecb81', fontSize:11, fontWeight:700, padding:'3px 8px', borderRadius:4 }}>
+                {demoMode ? 'DEMO' : 'LIVE'}
+              </span>
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Status</span><span style={{ color:'#eaecef', fontSize:12, fontWeight:700 }}>{statusDot(executorStatus)}{executorStatus}</span></div>
+              {executorIdentity?.token_id && <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Token ID</span><span style={{ color:'#f0b90b', fontSize:12, fontWeight:700 }}>#{executorIdentity.token_id}</span></div>}
+              {executorIdentity?.wallet_address && <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Wallet</span><a href={`${BSCSCAN}/address/${executorIdentity.wallet_address}`} target="_blank" rel="noreferrer" style={{ color:'#eaecef', fontSize:12, textDecoration:'none' }}>{executorIdentity.wallet_address.slice(0,6)}...{executorIdentity.wallet_address.slice(-4)}</a></div>}
+              <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Trades</span><span style={{ color:'#eaecef', fontSize:12, fontWeight:700 }}>{trades.length}</span></div>
+              <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Win Rate</span><span style={{ color:'#eaecef', fontSize:12, fontWeight:700 }}>{trades.length > 0 ? `${((trades.filter(t => (t.pnl_pct || 0) > 0).length / trades.length)*100).toFixed(1)}%` : '—'}</span></div>
+            </div>
+          </div>
+
+          {/* Guardian Card */}
+          <div style={{ background:'#1e2329', borderRadius:12, border:`1px solid ${isHalted ? 'rgba(246,70,93,0.4)' : '#2b3139'}`, padding:20 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:14 }}>
+              <ShieldCheck size={18} color={isHalted ? '#f6465d' : '#0ecb81'} />
+              <span style={{ color:'#eaecef', fontWeight:800, fontSize:14 }}>Risk Guardian</span>
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Status</span><span style={{ color:'#eaecef', fontSize:12, fontWeight:700 }}>{statusDot(guardianStatus)}{guardianStatus}</span></div>
+              {guardianIdentity?.token_id && <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Token ID</span><span style={{ color:'#f0b90b', fontSize:12, fontWeight:700 }}>#{guardianIdentity.token_id}</span></div>}
+              <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Drawdown</span><span style={{ color: (guardianState?.drawdown_pct || 0) > 15 ? '#f6465d' : '#eaecef', fontSize:12, fontWeight:700 }}>{guardianState?.drawdown_pct != null ? `${guardianState.drawdown_pct.toFixed(1)}%` : '—'}</span></div>
+              <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Consec. Losses</span><span style={{ color:'#eaecef', fontSize:12, fontWeight:700 }}>{guardianState?.consecutive_losses ?? '—'}</span></div>
+              <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Peak Equity</span><span style={{ color:'#eaecef', fontSize:12, fontWeight:700 }}>{guardianState?.peak_equity_bnb != null ? `${guardianState.peak_equity_bnb.toFixed(4)} BNB` : '—'}</span></div>
+              {guardianState?.last_check_at && <div style={{ display:'flex', justifyContent:'space-between' }}><span style={{ color:'#848e9c', fontSize:12 }}>Last Check</span><span style={{ color:'#848e9c', fontSize:12 }}>{new Date(guardianState.last_check_at).toLocaleTimeString()}</span></div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Live Trade Feed */}
+      {(trades.length > 0 || wsConnected) && (
+        <div style={{ background:'#1e2329', borderRadius:12, border:'1px solid #2b3139', padding:20, marginBottom:20 }}>
+          <div style={{ color:'#eaecef', fontWeight:800, fontSize:14, marginBottom:14, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <span>Live Trade Feed</span>
+            {demoMode && <span style={{ fontSize:11, color:'#f0b90b', fontWeight:700, background:'rgba(240,185,11,0.1)', padding:'3px 8px', borderRadius:4 }}>DEMO MODE</span>}
+          </div>
+          <div style={{ overflowX:'auto' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead>
+                <tr style={{ borderBottom:'1px solid #2b3139' }}>
+                  {['Time','Asset','Dir','Amount','Status','PnL','Tx'].map(h => (
+                    <th key={h} style={{ textAlign:'left', padding:'6px 10px', color:'#848e9c', fontWeight:700, whiteSpace:'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {trades.length === 0 ? (
+                  <tr><td colSpan={7} style={{ padding:'20px 10px', color:'#848e9c', textAlign:'center' }}>No trades yet — waiting for signals...</td></tr>
+                ) : trades.map((t) => (
+                  <tr key={t.signal_id} style={{ borderBottom:'1px solid #1a1e23' }}>
+                    <td style={{ padding:'8px 10px', color:'#848e9c', whiteSpace:'nowrap' }}>{new Date(t.created_at).toLocaleTimeString()}</td>
+                    <td style={{ padding:'8px 10px', color:'#eaecef', fontWeight:700 }}>{t.asset}</td>
+                    <td style={{ padding:'8px 10px', color: t.direction === 'LONG' ? '#0ecb81' : '#f6465d', fontWeight:700 }}>{t.direction}</td>
+                    <td style={{ padding:'8px 10px', color:'#eaecef' }}>{t.amount_bnb?.toFixed(4)} BNB</td>
+                    <td style={{ padding:'8px 10px' }}><span style={{ background: t.status === 'CONFIRMED' ? 'rgba(14,203,129,0.1)' : t.status === 'DEMO' ? 'rgba(240,185,11,0.1)' : 'rgba(246,70,93,0.1)', color: t.status === 'CONFIRMED' ? '#0ecb81' : t.status === 'DEMO' ? '#f0b90b' : '#f6465d', padding:'2px 7px', borderRadius:4, fontSize:11, fontWeight:700 }}>{t.status}</span></td>
+                    <td style={{ padding:'8px 10px', color: (t.pnl_pct || 0) >= 0 ? '#0ecb81' : '#f6465d', fontWeight:700 }}>{t.pnl_pct != null ? `${t.pnl_pct >= 0 ? '+' : ''}${t.pnl_pct.toFixed(2)}%` : '—'}</td>
+                    <td style={{ padding:'8px 10px' }}>
+                      {t.tx_hash && !t.tx_hash.startsWith('DEMO') ? (
+                        <a href={`${BSCSCAN}/tx/${t.tx_hash}`} target="_blank" rel="noreferrer" style={{ color:'#f0b90b', textDecoration:'none', display:'flex', alignItems:'center', gap:4, fontSize:12 }}>
+                          {t.tx_hash.slice(0,8)}… <ExternalLink size={11} />
+                        </a>
+                      ) : (
+                        <span style={{ color:'#848e9c', fontFamily:'monospace', fontSize:11 }}>{t.tx_hash?.slice(0,10)}…</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Controls */}
+      <div style={{ background:'#1e2329', borderRadius:12, border:'1px solid #2b3139', padding:20 }}>
+        <div style={{ color:'#eaecef', fontWeight:800, fontSize:14, marginBottom:16 }}>Controls & Settings</div>
+
+        {/* Auto-Trading Toggle */}
+        <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16 }}>
+          <span style={{ color:'#848e9c', fontSize:13, width:120 }}>Auto-Trading</span>
+          <button onClick={() => setAutoTrading(v => !v)} style={{ width:52, height:28, borderRadius:14, background: autoTrading ? 'rgba(14,203,129,0.3)' : '#2b3139', border: autoTrading ? '1px solid #0ecb81' : '1px solid #3c4349', cursor:'pointer', position:'relative', transition:'all 0.2s' }}>
+            <span style={{ position:'absolute', top:3, left: autoTrading ? 26 : 3, width:20, height:20, borderRadius:'50%', background: autoTrading ? '#0ecb81' : '#848e9c', transition:'left 0.2s' }} />
+          </button>
+          <span style={{ color: autoTrading ? '#0ecb81' : '#848e9c', fontSize:13, fontWeight:700 }}>{autoTrading ? 'ON' : 'OFF'}</span>
+        </div>
+
+        {/* Settings Grid */}
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:16 }}>
+          {[
+            ['Max Position (BNB)', maxTradeBnb, setMaxTradeBnb],
+            ['Slippage (bps)', slippageBps, setSlippageBps],
+            ['Max Drawdown (%)', maxDrawdown, setMaxDrawdown],
+            ['Max Consec. Losses', maxLosses, setMaxLosses],
+          ].map(([label, val, setter]) => (
+            <div key={label as string}>
+              <div style={{ color:'#848e9c', fontSize:11, marginBottom:4, fontWeight:600 }}>{label as string}</div>
+              <input
+                type="number"
+                value={val as string}
+                onChange={e => (setter as (v: string) => void)(e.target.value)}
+                style={{ width:'100%', background:'#0b0e11', border:'1px solid #2b3139', borderRadius:6, padding:'8px 10px', color:'#eaecef', fontSize:13, outline:'none', boxSizing:'border-box' }}
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* Action Buttons */}
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+          <button onClick={saveSettings} style={{ background: settingsSaved ? '#0ecb81' : 'rgba(240,185,11,0.15)', border:'1px solid rgba(240,185,11,0.3)', borderRadius:8, padding:'9px 18px', color: settingsSaved ? '#0b0e11' : '#f0b90b', fontWeight:700, fontSize:13, cursor:'pointer' }}>
+            {settingsSaved ? '✓ Saved' : 'Save Settings'}
+          </button>
+          <button onClick={() => sendControl('stop')} style={{ background:'rgba(246,70,93,0.08)', border:'1px solid rgba(246,70,93,0.25)', borderRadius:8, padding:'9px 18px', color:'#f6465d', fontWeight:700, fontSize:13, cursor:'pointer' }}>
+            Stop Executor
+          </button>
+          <button onClick={() => sendControl('halt')} style={{ background:'rgba(246,70,93,0.15)', border:'1px solid rgba(246,70,93,0.4)', borderRadius:8, padding:'9px 18px', color:'#f6465d', fontWeight:800, fontSize:13, cursor:'pointer' }}>
+            Force Guardian Halt
+          </button>
+          <button onClick={() => sendControl('restart')} style={{ background:'rgba(14,203,129,0.08)', border:'1px solid rgba(14,203,129,0.2)', borderRadius:8, padding:'9px 18px', color:'#0ecb81', fontWeight:700, fontSize:13, cursor:'pointer' }}>
+            Restart Both
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function Home() {
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
@@ -342,6 +702,8 @@ export default function Home() {
               {activeTab === 'faq' && <FaqPanel />}
               
               {activeTab === 'submission' && <SubmissionPanel />}
+
+              {activeTab === 'agents' && <AgentControlPanel />}
             </div>
           ) : (
             <div className="loading-panel">Preparing backtest...</div>
