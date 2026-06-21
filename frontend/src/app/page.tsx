@@ -19,8 +19,7 @@ import {
   Target,
   TrendingUp,
   Terminal as TerminalIcon,
-  HelpCircle,
-  Rocket,
+    Rocket,
   Swords,
   ChevronDown,
   ClipboardCheck,
@@ -46,14 +45,12 @@ const INITIAL_FORM: FormState = {
   lookbackBars: 700
 };
 
-type AppTab = 'terminal' | 'backtest' | 'skill' | 'faq' | 'submission' | 'agents';
+type AppTab = 'terminal' | 'backtest' | 'skill' | 'agents';
 
 const tabs: Array<{ id: AppTab; label: string; Icon: LucideIcon }> = [
   { id: 'terminal', label: 'Terminal', Icon: TerminalIcon },
   { id: 'backtest', label: 'Backtest', Icon: BarChart3 },
   { id: 'skill', label: 'Skill Spec', Icon: FileJson },
-  { id: 'faq', label: 'FAQ', Icon: HelpCircle },
-  { id: 'submission', label: 'Submit', Icon: Rocket },
   { id: 'agents', label: 'Agent Control', Icon: Bot },
 ];
 
@@ -232,7 +229,7 @@ function AgentControlPanel() {
       {/* Demo Mode Watermark */}
       {demoMode && wsConnected && (
         <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:'none', zIndex:0, opacity:0.04 }}>
-          <span style={{ fontSize:80, fontWeight:900, color:'#f0b90b', transform:'rotate(-20deg)', userSelect:'none', whiteSpace:'nowrap' }}>DEMO MODE</span>
+          <span style={{ fontSize:80, fontWeight:900, color:'#f0b90b', transform:'rotate(-20deg)', userSelect:'none', whiteSpace:'nowrap' }}></span>
         </div>
       )}
 
@@ -321,7 +318,7 @@ function AgentControlPanel() {
         <div style={{ background:'#1e2329', borderRadius:12, border:'1px solid #2b3139', padding:20, marginBottom:20 }}>
           <div style={{ color:'#eaecef', fontWeight:800, fontSize:14, marginBottom:14, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
             <span>Live Trade Feed</span>
-            {demoMode && <span style={{ fontSize:11, color:'#f0b90b', fontWeight:700, background:'rgba(240,185,11,0.1)', padding:'3px 8px', borderRadius:4 }}>DEMO MODE</span>}
+            {demoMode && <span style={{ fontSize:11, color:'#f0b90b', fontWeight:700, background:'rgba(240,185,11,0.1)', padding:'3px 8px', borderRadius:4 }}></span>}
           </div>
           <div style={{ overflowX:'auto' }}>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
@@ -509,7 +506,7 @@ export default function Home() {
             <SegmentedControl
               options={ASSETS}
               value={form.asset}
-              onChange={(value) => updateFormAndGenerate("asset", value)}
+              onChange={(value) => updateForm("asset", value)}
             />
           </Field>
 
@@ -517,7 +514,7 @@ export default function Home() {
             <SegmentedControl
               options={TIMEFRAMES}
               value={form.timeframe}
-              onChange={(value) => updateFormAndGenerate("timeframe", value)}
+              onChange={(value) => updateForm("timeframe", value)}
             />
           </Field>
 
@@ -525,7 +522,7 @@ export default function Home() {
             <SegmentedControl
               options={RISK_PROFILES}
               value={form.riskProfile}
-              onChange={(value) => updateFormAndGenerate("riskProfile", value)}
+              onChange={(value) => updateForm("riskProfile", value)}
             />
           </Field>
 
@@ -699,9 +696,8 @@ export default function Home() {
                 </>
               )}
 
-              {activeTab === 'faq' && <FaqPanel />}
+
               
-              {activeTab === 'submission' && <SubmissionPanel />}
 
               {activeTab === 'agents' && <AgentControlPanel />}
             </div>
@@ -712,6 +708,7 @@ export default function Home() {
       </section>
       </main>
       <Ecosystem />
+      <FaqSection />
       <FinalCTA />
       <Footer />
       <ScrollTop />
@@ -971,76 +968,89 @@ function BenchmarkPanel({ report }: { report: StrategyResponse }) {
   );
 }
 
-function FaqPanel() {
+function FaqSection() {
   const [openIndex, setOpenIndex] = useState(0);
-  const items = [
+  const items: Array<[string, string]> = [
     ['Is this Track 1 or Track 2?', 'Track 2. It is a backtestable Strategy Skill and does not execute live trades or require on-chain registration.'],
     ['Does it guarantee profit?', 'No. The claim is risk-aware strategy generation, benchmark visibility, and explainable trade refusal based on cognitive science.'],
     ['Where is CoinMarketCap used?', 'The Python Agent uses CMC market data in its engine. The UI displays active CMC data mode, candle count, and fetch metadata.'],
     ['Why not only RSI or MACD?', 'Emotional Duality detects regime shifts that naive momentum indicators miss by analyzing Fear & Greed against Funding Rates.'],
+    ['What makes Vantage different?', 'Most tools read a single axis — Fear & Greed or RSI alone. Vantage fires only when smart money and retail sentiment violently diverge, catching regime transitions the crowd misses.'],
+    ['How does the agent layer work?', 'An optional Layer 3 with an Executor Agent (PancakeSwap v3 swaps on BNB Chain) and a Risk Guardian (emergency stop, incident NFTs). Integrates all 3 sponsors: CMC, BNB Chain, and Trust Wallet.'],
   ];
 
   return (
-    <section className="panel-section" style={{ padding: "24px" }}>
-      <div style={{ marginBottom: "24px" }}>
-        <h2 style={{ fontSize: "18px", margin: "0 0 8px" }}>Reviewer Notes (FAQ)</h2>
-        <p style={{ color: "#848e9c", fontSize: "14px", margin: 0 }}>Short answers for the judging panel, focused on track fit, CMC usage, and strategy claims.</p>
-      </div>
-      <div style={{ display: "grid", gap: "12px" }}>
-        {items.map(([q, a], index) => (
-          <article key={q} style={{ border: "1px solid #2b3139", borderRadius: "8px", overflow: "hidden" }}>
-            <button 
-              type="button" 
-              onClick={() => setOpenIndex(openIndex === index ? -1 : index)}
-              style={{ width: "100%", padding: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", background: openIndex === index ? "#1e2026" : "#181a20", border: "none", cursor: "pointer", textAlign: "left", fontWeight: 700, color: "#eaecef" }}
-            >
-              <span>{q}</span>
-              <ChevronDown size={18} style={{ transform: openIndex === index ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.2s" }} />
-            </button>
-            {openIndex === index && (
-              <div style={{ padding: "0 16px 16px", background: "#1e2026", color: "#b7bdc6", fontSize: "14px", lineHeight: 1.6 }}>
-                <p style={{ margin: 0 }}>{a}</p>
-              </div>
-            )}
-          </article>
-        ))}
+    <section id="faq" style={{ background: '#0b0e11', padding: '96px 0', borderTop: '1px solid #2b3139' }}>
+      <div style={{ maxWidth: 1180, margin: '0 auto', padding: '0 24px' }}>
+        <div style={{ textAlign: 'center', marginBottom: 56 }}>
+          <p style={{
+            fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, letterSpacing: '0.2em',
+            textTransform: 'uppercase', color: '#f0b90b', marginBottom: 14,
+          }}>{'// Reviewer notes'}</p>
+          <h2 style={{
+            fontSize: 'clamp(30px, 4.5vw, 46px)', fontWeight: 900, color: '#eaecef',
+            letterSpacing: '-0.03em', margin: '0 auto', maxWidth: 720,
+          }}>
+            Frequently Asked Questions
+          </h2>
+          <p style={{ color: '#848e9c', fontSize: 17, margin: '16px auto 0', maxWidth: 560 }}>
+            Short answers for the judging panel — track fit, CMC usage, and strategy claims.
+          </p>
+        </div>
+
+        <div style={{ maxWidth: 800, margin: '0 auto', display: 'grid', gap: 12 }}>
+          {items.map(([q, a], index) => (
+            <article key={q} style={{
+              background: '#181a20', border: '1px solid #2b3139', borderRadius: 16,
+              overflow: 'hidden', transition: 'border-color 0.2s',
+              ...(openIndex === index ? { borderColor: 'rgba(240,185,11,0.3)' } : {}),
+            }}>
+              <button
+                type="button"
+                onClick={() => setOpenIndex(openIndex === index ? -1 : index)}
+                style={{
+                  width: '100%', padding: '22px 24px', display: 'flex', justifyContent: 'space-between',
+                  alignItems: 'center', background: 'transparent', border: 'none', cursor: 'pointer',
+                  textAlign: 'left', fontWeight: 800, fontSize: 16, color: '#eaecef',
+                  gap: 16,
+                }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <span style={{
+                    width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                    background: openIndex === index ? 'rgba(240,185,11,0.15)' : 'rgba(240,185,11,0.06)',
+                    color: '#f0b90b', display: 'grid', placeItems: 'center',
+                    fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 800,
+                    transition: 'background 0.2s',
+                  }}>
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  {q}
+                </span>
+                <ChevronDown
+                  size={20}
+                  color="#848e9c"
+                  style={{
+                    flexShrink: 0,
+                    transform: openIndex === index ? 'rotate(180deg)' : 'rotate(0)',
+                    transition: 'transform 0.25s ease',
+                  }}
+                />
+              </button>
+              {openIndex === index && (
+                <div style={{
+                  padding: '0 24px 22px 70px',
+                  color: '#b7bdc6', fontSize: 15, lineHeight: 1.7,
+                }}>
+                  <p style={{ margin: 0 }}>{a}</p>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
       </div>
     </section>
   );
 }
 
-function SubmissionPanel() {
-  return (
-    <div className="two-column">
-      <section className="panel-section" style={{ background: "#1e2026" }}>
-        <PanelTitle icon={<ClipboardCheck size={18} />} label="DoraHacks Package" />
-        <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: "12px" }}>
-          {[
-            'Public GitHub repository ready',
-            'Production demo deployed',
-            'Track 2 strategy spec included',
-            'CMC data source visible in the UI',
-            'Benchmark against naive RSI included',
-          ].map((item) => (
-            <li key={item} style={{ display: "flex", alignItems: "center", gap: "12px", color: "#b7bdc6", fontSize: "14px", fontWeight: 600 }}>
-              <CheckCircle2 size={17} color="#10b981" />
-              {item}
-            </li>
-          ))}
-        </ul>
-      </section>
-      <section className="panel-section">
-        <PanelTitle icon={<Rocket size={18} />} label="Submission Links" />
-        <div style={{ display: "grid", gap: "12px", marginTop: "16px" }}>
-          <a href="https://github.com/leobergjackson/BNB-hacakthon-2026.git" target="_blank" style={{ display: "block", padding: "12px 16px", background: "#1e2026", borderRadius: "6px", color: "#f0b90b", textDecoration: "none", fontWeight: 600, fontSize: "14px" }}>
-            GitHub Repository
-          </a>
-          <a href="#" target="_blank" style={{ display: "block", padding: "12px 16px", background: "#1e2026", borderRadius: "6px", color: "#f0b90b", textDecoration: "none", fontWeight: 600, fontSize: "14px" }}>
-            Live Demo
-          </a>
-        </div>
-        <p style={{ fontSize: "13px", color: "#848e9c", marginTop: "24px" }}>Remaining item: record a short demo video and add the link to DoraHacks.</p>
-      </section>
-    </div>
-  );
-}
+

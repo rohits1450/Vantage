@@ -207,7 +207,7 @@ export default function HeroSection() {
             color: '#f0b90b', display: 'inline-flex', alignItems: 'center', gap: 10,
           }}>
             <span style={{ width: 26, height: 1, background: '#f0b90b', display: 'inline-block' }} />
-            Hackathon Entry · CMC Skills Marketplace
+             CMC Skills Marketplace
           </motion.div>
 
           {/* Pixel headline — banner style */}
@@ -215,8 +215,8 @@ export default function HeroSection() {
             fontFamily: 'var(--font-pixel)', fontSize: 'clamp(26px, 5vw, 52px)', lineHeight: 1.32,
             color: '#eaecef', margin: 0, letterSpacing: '0.01em', textShadow: '0 3px 0 rgba(0,0,0,0.5)',
           }}>
-            <span style={{ display: 'block' }}>EMOTIONAL</span>
-            <span style={{ display: 'block', color: '#f0b90b' }}>DUALITY</span>
+            <span style={{ display: 'block' }}>VANTAGE</span>
+            <span style={{ display: 'block', color: '#f0b90b' }}></span>
           </motion.h1>
 
           {/* Mono subtitle — like "AI TRADING AGENT EDITION" */}

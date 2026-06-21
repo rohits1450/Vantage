@@ -96,8 +96,8 @@ graph TB
 ### Installation
 
 ```bash
-git clone https://github.com/your-team/regimeshift-skill.git
-cd regimeshift-skill
+git clone https://github.com/rohits1450/Vantage
+cd Vantage
 npm install
 cp .env.example .env
 # Edit .env with your CMC_API_KEY
